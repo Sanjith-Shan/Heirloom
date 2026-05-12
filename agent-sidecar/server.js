@@ -113,43 +113,59 @@ app.get("/debug/attest", async (_req, res) => {
     return res.json(out);
   }
 
-  // Try multiple candidate audiences in case "llm-proxy" is wrong
-  const audiences = ["llm-proxy", "ai-gateway", "vercel-ai-gateway", "compute"];
-  out.attempts = [];
+  // Get a JWT once (audience llm-proxy — known correct), then test it
+  // against multiple candidate gateway hosts and request shapes.
+  let jwt;
+  try {
+    const client = new AttestClient({
+      kmsServerURL: process.env.KMS_SERVER_URL,
+      kmsPublicKey: process.env.KMS_PUBLIC_KEY,
+      audience: "llm-proxy",
+    });
+    jwt = await client.attest();
+    out.jwt = {
+      first50: jwt.slice(0, 50),
+      last20: jwt.slice(-20),
+      decoded: decodeJwtParts(jwt),
+    };
+  } catch (e) {
+    out.attest_error = String(e?.message || e);
+    return res.json(out);
+  }
 
-  for (const audience of audiences) {
-    const attempt = { audience };
-    try {
-      const client = new AttestClient({
-        kmsServerURL: process.env.KMS_SERVER_URL,
-        kmsPublicKey: process.env.KMS_PUBLIC_KEY,
-        audience,
-      });
-      const jwt = await client.attest();
-      attempt.jwt_first50 = jwt.slice(0, 50);
-      attempt.jwt_last20 = jwt.slice(-20);
-      attempt.decoded = decodeJwtParts(jwt);
+  const gateways = [
+    "https://ai-gateway-dev.eigencloud.xyz",
+    "https://ai-gateway.eigencloud.xyz",
+    "https://llm-proxy.eigencloud.xyz",
+    "https://llm-proxy-dev.eigencloud.xyz",
+  ];
+  const paths = ["/v1/chat/completions", "/chat/completions", "/v1/completions"];
+  out.gateway_attempts = [];
 
-      // Try sending it to the gateway with a no-op request
-      const gwUrl = (process.env.EIGEN_GATEWAY_URL || "https://ai-gateway-dev.eigencloud.xyz") + "/v1/chat/completions";
-      const gwResp = await fetch(gwUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${jwt}`,
-        },
-        body: JSON.stringify({
-          model: "anthropic/claude-sonnet-4.6",
-          messages: [{ role: "user", content: "hi" }],
-          max_tokens: 5,
-        }),
-      });
-      attempt.gateway_status = gwResp.status;
-      attempt.gateway_body = (await gwResp.text()).slice(0, 500);
-    } catch (e) {
-      attempt.error = String(e?.message || e);
+  for (const gw of gateways) {
+    for (const path of paths) {
+      const attempt = { url: gw + path };
+      try {
+        const r = await fetch(gw + path, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({
+            model: "anthropic/claude-sonnet-4.6",
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 5,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        attempt.status = r.status;
+        attempt.body = (await r.text()).slice(0, 300);
+      } catch (e) {
+        attempt.error = String(e?.message || e);
+      }
+      out.gateway_attempts.push(attempt);
     }
-    out.attempts.push(attempt);
   }
 
   res.json(out);
