@@ -27,7 +27,7 @@ REPO_URL="${REPO_URL:-https://github.com/Sanjith-Shan/Heirloom}"
 COMMIT="${COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 BUILD_DOCKERFILE="${BUILD_DOCKERFILE:-Dockerfile}"
 
-DESCRIPTION="${DESCRIPTION:-Crypto dead-man's switch — TEE-resident inheritance protocol}"
+DESCRIPTION="${DESCRIPTION:-Crypto inheritance protocol — TEE-resident sovereign agent}"
 WEBSITE="${WEBSITE:-https://github.com/Sanjith-Shan/Heirloom}"
 
 echo "================================================================"
