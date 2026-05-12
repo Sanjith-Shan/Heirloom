@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ethers } from "ethers";
-import { api, Beneficiary, EmergencyContact } from "@/lib/api";
+import { api, Beneficiary, EmergencyContact, isMockMode } from "@/lib/api";
 import { encryptSeed } from "@/lib/crypto";
 import { descriptorToArray } from "@/lib/faceMatch";
 import { setLocalPlanId, shortAddr } from "@/lib/utils";
@@ -39,6 +39,27 @@ export default function Setup() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // In mock mode, pre-fill every field so the user only has to click Next.
+  useEffect(() => {
+    if (!isMockMode()) return;
+    const demoSeed = "crew render spare response usual atom alpha provide eyebrow amazing dawn crumble";
+    setSeedPhrase(demoSeed);
+    try {
+      setDerivedAddress(ethers.Wallet.fromPhrase(demoSeed).address);
+    } catch {/* ignore */}
+    setBeneficiaries([
+      { name: "Alice Yamamoto (spouse)", address: "0xa39c11ae6cd8f7a0c6f9eebe4d8d8b7f0a2d9a31", percentage: 60, relationship: "spouse" },
+      { name: "Children's Hospital Foundation", address: "0x4c5e8b9a2d1f3c4e6b7d8a9c0f1b2d3e4a5c6d7e", percentage: 40, relationship: "charity" },
+    ]);
+    setContacts([
+      { name: "Jane Doe", email: "jane@example.com", relationship: "lawyer" },
+      { name: "Marcus Chen", email: "marcus@example.com", relationship: "brother" },
+    ]);
+    setUserEmail("owner@example.com");
+    setInterval(30);
+    setChains([84532]);
+  }, []);
 
   function validateSeed(s: string): boolean {
     setSeedError(null);

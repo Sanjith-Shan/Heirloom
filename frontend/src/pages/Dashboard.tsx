@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, StatusResponse } from "@/lib/api";
+import { api, StatusResponse, isMockMode } from "@/lib/api";
 import { chainName, localPlanId, shortAddr } from "@/lib/utils";
 import PhaseIndicator from "@/components/PhaseIndicator";
 import CountdownTimer from "@/components/CountdownTimer";
 import EventLog from "@/components/EventLog";
+import DemoControls from "@/components/DemoControls";
 
 export default function Dashboard() {
   const nav = useNavigate();
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let pid = localPlanId();
@@ -28,12 +30,12 @@ export default function Dashboard() {
       }
     }
     load();
-    const t = setInterval(load, 5000);
+    const t = setInterval(load, isMockMode() ? 1500 : 5000);
     return () => {
       cancelled = true;
       clearInterval(t);
     };
-  }, []);
+  }, [refreshTick]);
 
   if (error && !status) {
     return (
@@ -46,6 +48,8 @@ export default function Dashboard() {
   }
 
   if (!status) return <div className="container-wide py-16 text-neutral-400">Loading…</div>;
+
+  const refresh = () => setRefreshTick((t) => t + 1);
 
   return (
     <div className="container-wide py-12 grid lg:grid-cols-3 gap-6">
@@ -62,7 +66,7 @@ export default function Dashboard() {
                   : "—"}
               </div>
               <button
-                onClick={() => nav("/heartbeat")}
+                onClick={() => nav(isMockMode() ? "/heartbeat?mock=1" : "/heartbeat")}
                 className="mt-3 btn-primary"
               >
                 I'm here — check in
@@ -71,10 +75,12 @@ export default function Dashboard() {
           </div>
         </div>
 
+        <DemoControls currentPhase={status.current_phase} onChange={refresh} />
+
         <div className="card">
           <div className="flex items-baseline justify-between mb-4">
             <h2 className="text-lg font-medium">Audit trail</h2>
-            <Link to="/audit" className="text-xs text-neutral-400 hover:text-white">view all →</Link>
+            <Link to={isMockMode() ? "/audit?mock=1" : "/audit"} className="text-xs text-neutral-400 hover:text-white">view all →</Link>
           </div>
           <EventLog events={status.recent_events} max={10} />
         </div>
@@ -86,7 +92,7 @@ export default function Dashboard() {
           <div className="font-mono text-sm break-all">{status.wallet_address}</div>
         </div>
         <div className="card">
-          <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2">Agent identity</div>
+          <div className="text-xs uppercase tracking-wider text-neutral-500 mb-2">Agent identity (TEE wallet)</div>
           <div className="font-mono text-sm break-all">{shortAddr(status.agent_wallet_address)}</div>
           <div className="text-xs text-neutral-500 mt-1">
             Stable, deterministic from your app ID. Anyone can verify any signed receipt by recovering this address.

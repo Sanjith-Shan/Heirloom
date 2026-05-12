@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ethers } from "ethers";
-import { api } from "@/lib/api";
+import { api, isMockMode } from "@/lib/api";
 import { localPlanId } from "@/lib/utils";
 import { FACE_MATCH_THRESHOLD, descriptorDistance, isMatch } from "@/lib/faceMatch";
 import CameraCapture from "@/components/CameraCapture";
@@ -107,6 +107,21 @@ export default function Heartbeat() {
     }
   }
 
+  // Mock mode: skip camera + wallet entirely. One button → success → dashboard.
+  async function mockOneClickHeartbeat() {
+    if (!planId) return;
+    setStep("submitted");
+    const fakeHash = "9b74c9897bac770ffc029102a200c5de37d8e9bafa97d0e3b9ad3c2f5f9c1a3e";
+    setSelfieHash(fakeHash);
+    await api.postHeartbeat(planId, {
+      timestamp: Math.floor(Date.now() / 1000),
+      selfie_hash: fakeHash,
+      wallet_signature: "0x" + "f".repeat(130),
+    });
+    setStep("success");
+    setTimeout(() => nav("/dashboard?mock=1"), 1200);
+  }
+
   return (
     <div className="container-narrow py-12">
       <h1 className="text-3xl font-semibold tracking-tight mb-2">Check in</h1>
@@ -116,7 +131,18 @@ export default function Heartbeat() {
       </p>
 
       <div className="card">
-        {step === "ready" && <CameraCapture extractDescriptor={faceEnabled} onCapture={handleCapture} />}
+        {isMockMode() && step === "ready" && (
+          <div className="space-y-4">
+            <div className="rounded-md bg-amber-950/20 border border-amber-800/40 p-3 text-sm">
+              <span className="text-amber-300 font-medium">Demo mode:</span> one click captures a fake selfie and skips wallet signing.
+            </div>
+            <button className="btn-primary w-full" onClick={mockOneClickHeartbeat}>
+              Take demo selfie & check in
+            </button>
+          </div>
+        )}
+
+        {!isMockMode() && step === "ready" && <CameraCapture extractDescriptor={faceEnabled} onCapture={handleCapture} />}
 
         {step === "selfie-taken" && (
           <div className="space-y-4">
