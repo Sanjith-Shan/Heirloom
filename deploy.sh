@@ -91,6 +91,7 @@ DEPLOY_FLAGS=(
     --instance-type "$INSTANCE"
     --env-file "$ENV_FILE"
     --log-visibility public
+    --resource-usage-monitoring enable
     --verifiable
     --verbose
 )
