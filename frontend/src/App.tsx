@@ -6,12 +6,14 @@ import Heartbeat from "./pages/Heartbeat";
 import Director from "./pages/Director";
 import AuditTrail from "./pages/AuditTrail";
 import Verify from "./pages/Verify";
+import { MockBanner } from "./components/MockBanner";
+import { isMockMode } from "./lib/api";
 
 function Header() {
   return (
     <header className="border-b border-neutral-900 sticky top-0 z-30 backdrop-blur bg-background/85">
       <div className="container-wide flex items-center justify-between py-4">
-        <Link to="/" className="flex items-center gap-2">
+        <Link to={isMockMode() ? "/?mock=1" : "/"} className="flex items-center gap-2">
           <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-white to-neutral-400" />
           <span className="font-semibold tracking-tight text-lg">Heirloom</span>
         </Link>
@@ -29,6 +31,7 @@ function Header() {
 export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
+      <MockBanner />
       <Header />
       <main className="flex-1">
         <Routes>

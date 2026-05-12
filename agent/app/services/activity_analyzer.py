@@ -153,6 +153,52 @@ async def _try_direct_gateway(prompt: str) -> dict[str, Any] | None:
         return None
 
 
+async def _try_openai_direct(prompt: str) -> dict[str, Any] | None:
+    """Last-resort fallback: OpenAI's API directly.
+
+    Used when Eigen Labs' AI Gateway is unavailable (e.g. the current sepolia
+    KMS-public-key trust-sync bug). The OPENAI_API_KEY env var is
+    KMS-encrypted inside the TEE, so the key is sealed in hardware just like
+    the user's seed phrase. Trade-off: we lose the per-call attestation that
+    EigenAI would provide, but the inference itself is real.
+    """
+    s = get_settings()
+    if not s.openai_api_key:
+        return None
+    url = "https://api.openai.com/v1/chat/completions"
+    body = {
+        "model": s.openai_model,
+        "seed": 42,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {s.openai_api_key}"},
+                json=body,
+            )
+        if r.status_code >= 400:
+            logger.warning("openai direct %s: %s", r.status_code, r.text[:300])
+            return None
+        resp = r.json()
+        return {
+            "text": resp["choices"][0]["message"]["content"],
+            "model": f"openai/{resp.get('model') or s.openai_model}",
+            "mode": "openai-fallback",
+            "response_id": resp.get("id"),
+            "usage": resp.get("usage"),
+        }
+    except Exception as exc:
+        logger.warning("openai direct call failed: %s", exc)
+        return None
+
+
 async def analyze(plan: Plan) -> AnalysisResult:
     s = get_settings()
 
@@ -178,10 +224,14 @@ async def analyze(plan: Plan) -> AnalysisResult:
     prompt = _build_prompt(plan, txs, balances)
     prompt_hash = _sha256_hex(prompt)
 
-    # Try sidecar, then direct, then mock
+    # Try sidecar (TEE attestation) → direct gateway (manual JWT) →
+    # OpenAI fallback → mocked-from-on-chain. The ordering preserves the
+    # "EigenAI first, only fall back when forced" preference.
     inference_response: dict[str, Any] | None = await _try_sidecar(prompt)
     if inference_response is None:
         inference_response = await _try_direct_gateway(prompt)
+    if inference_response is None:
+        inference_response = await _try_openai_direct(prompt)
 
     if inference_response is None:
         # Mock — but keep it honest: derived purely from real on-chain reads.

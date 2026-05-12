@@ -1,4 +1,12 @@
-/* Typed API client mirroring the FastAPI surface. */
+/* Typed API client mirroring the FastAPI surface.
+ *
+ * When the URL contains ?mock=1 (sticky in sessionStorage so it survives
+ * navigation), every method here delegates to lib/mock-api.ts instead of
+ * hitting the backend. Used for the live demo presentation where we want
+ * zero waiting and zero risk.
+ */
+
+import { mockApi, resetMockState } from "./mock-api";
 
 const API_BASE = ""; // same-origin via vite proxy in dev, single container in prod
 
@@ -68,15 +76,52 @@ export interface AnalysisResult {
   transaction_count_since_heartbeat: number;
   confidence_owner_active: "HIGH" | "MEDIUM" | "LOW" | "NONE";
   reasoning: string;
-  receipt_req_hash: string | null;
-  receipt_out_hash: string | null;
-  receipt_sig: string | null;
-  eigendalink: string | null;
+  prompt_hash: string | null;
+  response_id: string | null;
   model_id: string | null;
   chain_id: number | null;
-  system_fingerprint: string | null;
+  inference_mode: string;
   is_mocked: boolean;
+  agent_signature: string | null;
+  agent_address: string | null;
+  // Legacy fields (kept for backwards compat with older audit-log entries)
+  receipt_req_hash?: string | null;
+  receipt_out_hash?: string | null;
+  receipt_sig?: string | null;
+  eigendalink?: string | null;
+  system_fingerprint?: string | null;
 }
+
+// ---------------- Mock-mode detection ----------------
+
+const MOCK_FLAG_KEY = "heirloom.mock_mode";
+
+function detectAndPersistMockFlag(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reset") === "1") {
+      resetMockState();
+    }
+    if (params.get("mock") === "1") {
+      sessionStorage.setItem(MOCK_FLAG_KEY, "1");
+      return true;
+    }
+    if (params.get("mock") === "0") {
+      sessionStorage.removeItem(MOCK_FLAG_KEY);
+      return false;
+    }
+    return sessionStorage.getItem(MOCK_FLAG_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function isMockMode(): boolean {
+  return detectAndPersistMockFlag();
+}
+
+// ---------------- Real backend client ----------------
 
 async function jfetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API_BASE + path, {
@@ -90,7 +135,7 @@ async function jfetch<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-export const api = {
+const realApi = {
   health: () => jfetch<{ ok: boolean; agent_address: string; demo_mode: boolean }>("/api/health"),
   agentInfo: () => jfetch<{ agent_address: string; encryption_scheme: string }>("/api/agent-info"),
 
@@ -152,3 +197,24 @@ export const api = {
       jfetch<{ status: string }>(`/api/director/cancel-plan?key=${encodeURIComponent(key)}`, { method: "POST" }),
   },
 };
+
+// At call time decide which implementation to dispatch to.
+// Using a Proxy-like wrapper so the choice is re-evaluated on every call,
+// which means flipping mock mode mid-session via the URL works immediately.
+function pick<T extends Record<string, any>>(real: T, mock: T): T {
+  const out: any = {};
+  for (const key of Object.keys(real)) {
+    const r = (real as any)[key];
+    const m = (mock as any)[key];
+    if (typeof r === "function") {
+      out[key] = (...args: any[]) => (isMockMode() ? m(...args) : r(...args));
+    } else if (typeof r === "object" && r !== null) {
+      out[key] = pick(r, m);
+    } else {
+      out[key] = isMockMode() ? m : r;
+    }
+  }
+  return out as T;
+}
+
+export const api = pick(realApi, mockApi as unknown as typeof realApi);

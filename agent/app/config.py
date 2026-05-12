@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     kms_server_url: str = Field(default="", alias="KMS_SERVER_URL")
     kms_public_key: str = Field(default="", alias="KMS_PUBLIC_KEY")
 
+    # OpenAI direct fallback — used when Eigen Labs' AI Gateway rejects
+    # KMS-issued JWTs (current platform-side issue). Key lives in the
+    # KMS-encrypted env vars; never appears on-chain.
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+
     # Demo controls
     demo_mode: bool = Field(default=True, alias="DEMO_MODE")
     director_key: str = Field(default="demo-secret-2026", alias="DIRECTOR_KEY")
