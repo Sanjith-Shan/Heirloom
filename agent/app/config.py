@@ -19,12 +19,15 @@ class Settings(BaseSettings):
         alias="MNEMONIC",
     )
 
-    # EigenAI
+    # EigenAI — primary path is the local Node sidecar (handles attestation
+    # automatically via @layr-labs/ai-gateway-provider). Direct gateway HTTP is
+    # the fallback for environments where the sidecar can't run.
+    sidecar_url: str = Field(default="http://127.0.0.1:9090", alias="SIDECAR_URL")
     eigen_gateway_url: str = Field(
         default="https://ai-gateway-dev.eigencloud.xyz",
         alias="EIGEN_GATEWAY_URL",
     )
-    eigen_model: str = Field(default="gpt-oss-120b-f16", alias="EIGEN_MODEL")
+    eigen_model: str = Field(default="anthropic/claude-sonnet-4.6", alias="EIGEN_MODEL")
     kms_auth_jwt: str = Field(default="", alias="KMS_AUTH_JWT")
     kms_server_url: str = Field(default="", alias="KMS_SERVER_URL")
     kms_public_key: str = Field(default="", alias="KMS_PUBLIC_KEY")

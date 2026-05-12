@@ -125,15 +125,21 @@ class AnalysisResult(BaseModel):
     transaction_count_since_heartbeat: int = 0
     confidence_owner_active: str = "NONE"  # HIGH | MEDIUM | LOW | NONE
     reasoning: str = ""
-    # Receipt fields from EigenAI gateway response
-    receipt_req_hash: str | None = None
-    receipt_out_hash: str | None = None
-    receipt_sig: str | None = None
-    eigendalink: str | None = None
+    # Determinism witness: sha256 of the canonical prompt. Anyone can replay
+    # the same prompt with seed=42 and confirm bit-identical output on the
+    # same model. The AI Gateway response itself is plain OpenAI-compatible
+    # — there is no per-call signature to verify; verifiability comes from
+    # the upstream image-digest attestation.
+    prompt_hash: str | None = None
+    response_id: str | None = None
     model_id: str | None = None
     chain_id: int | None = None
-    system_fingerprint: str | None = None
-    is_mocked: bool = False  # true when KMS_AUTH_JWT missing
+    inference_mode: str = "mocked"  # 'tee-attested' | 'manual-jwt' | 'mocked'
+    is_mocked: bool = False
+    # TEE-wallet signature over the canonical analysis result. Lets the Verify
+    # page recover the agent that produced this verdict.
+    agent_signature: str | None = None
+    agent_address: str | None = None
 
 
 class StatusResponse(BaseModel):

@@ -1,11 +1,17 @@
 /* Verification ceremony — recover signers from agent receipts.
  *
- * The agent signs every audit-relevant payload (heartbeats, EigenAI receipts,
- * execution logs) using its TEE-derived wallet. Anyone can recover the signer
- * with `ethers.verifyMessage(...)` and cross-check the address against
- * `verify.eigencloud.xyz` (which derives the wallet from the AppController app
- * ID). For EigenAI receipts, the signer should match a key registered in
- * `KeyRegistrar.getKey(operator)`.
+ * The agent signs every audit-relevant payload (analysis verdicts, execution
+ * logs) using its TEE-derived wallet. Anyone can recover the signer with
+ * `ethers.verifyMessage(...)` and cross-check the address against
+ * `verify-sepolia.eigencloud.xyz/app/<app-id>` (which exposes the EVM address
+ * derived from the deployed app's MNEMONIC).
+ *
+ * Note: the EigenAI gateway response itself is plain OpenAI-compatible — it
+ * does NOT contain a per-call operator signature. Verifiability of the model
+ * call comes from the upstream image-digest attestation (Heirloom's image is
+ * pinned, the model_id + seed=42 + prompt_hash make the call deterministic).
+ * The TEE-wallet signature on the verdict is what binds "this analysis came
+ * from THIS deployed agent" — recoverable here.
  */
 
 import { ethers } from "ethers";
@@ -26,34 +32,24 @@ export function recoverAgent(receipt: AgentReceipt): string {
   return ethers.verifyMessage(receipt.digest, "0x" + receipt.signature.replace(/^0x/, ""));
 }
 
-export interface EigenAIReceipt {
-  receipt_req_hash: string;
-  receipt_out_hash: string;
-  receipt_sig: string;
-  model_id: string;
-  chain_id?: number | null;
+/* Reproduce the agent's canonical-JSON digest so the signature can be verified
+ * against any payload object. Mirrors Python's
+ * json.dumps(..., sort_keys=True, separators=(",",":")) — keys sorted at
+ * every nesting level, no whitespace. */
+function deepCanonicalize(v: unknown): unknown {
+  if (v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map(deepCanonicalize);
+  const o = v as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(o).sort()) sorted[k] = deepCanonicalize(o[k]);
+  return sorted;
 }
 
-/* The EigenAI gateway signs `req_hash || out_hash || model_id || chain_id` —
- * exact byte order needs to be confirmed in-browser against the live verify-
- * signature doc on demo day. We expose multiple candidate concatenation
- * orders here so verifiers can pick the right one. */
-export function eigenAIVerificationCandidates(r: EigenAIReceipt): string[] {
-  const chainStr = (r.chain_id ?? 0).toString();
-  return [
-    r.receipt_req_hash + r.receipt_out_hash + r.model_id + chainStr,
-    "0x" + r.receipt_req_hash + r.receipt_out_hash + r.model_id + chainStr,
-  ];
-}
-
-export async function tryRecoverEigenAISigner(r: EigenAIReceipt): Promise<string | null> {
-  const sig = "0x" + (r.receipt_sig || "").replace(/^0x/, "");
-  for (const m of eigenAIVerificationCandidates(r)) {
-    try {
-      return ethers.verifyMessage(m, sig);
-    } catch {
-      // try next
-    }
-  }
-  return null;
+export async function canonicalDigest(payload: unknown): Promise<string> {
+  const canonical = JSON.stringify(deepCanonicalize(payload));
+  const buf = new TextEncoder().encode(canonical);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }

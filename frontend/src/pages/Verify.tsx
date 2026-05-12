@@ -6,8 +6,8 @@ import {
   APP_CONTROLLER_SEPOLIA,
   KEY_REGISTRAR_MAINNET,
   KEY_REGISTRAR_SEPOLIA,
+  canonicalDigest,
   recoverAgent,
-  tryRecoverEigenAISigner,
 } from "@/lib/verify";
 import {
   calculateAppId,
@@ -132,61 +132,89 @@ export default function Verify() {
       detail: hb ? new Date(hb.created_at).toLocaleString() : "no heartbeats",
     });
 
-    // 3. Try to recover EigenAI signer if we have an analysis
+    // 3. EigenAI analysis: verify the TEE-wallet signature on the verdict.
+    // The gateway response itself has no per-call signature — verifiability
+    // comes from (a) image-digest attestation upstream, and (b) the agent
+    // wallet signing the verdict here so anyone can prove which deployed app
+    // produced it.
     const eai = findLatest(status.recent_events, "EIGENAI_ANALYSIS");
-    if (eai && (eai.payload as any).receipt_sig) {
+    if (eai) {
       const r = eai.payload as any;
-      const recovered = await tryRecoverEigenAISigner({
-        receipt_req_hash: r.receipt_req_hash,
-        receipt_out_hash: r.receipt_out_hash,
-        receipt_sig: r.receipt_sig,
-        model_id: r.model_id,
-        chain_id: r.chain_id,
-      });
       out.push({
-        label: "EigenAI receipt signer recoverable",
-        ok: !!recovered,
-        detail: recovered
-          ? `recovered ${shortAddr(recovered)} — cross-checking against KeyRegistrar…`
-          : "could not recover with current concat order — confirm byte order against verify-signature doc",
+        label: `EigenAI inference mode: ${r.inference_mode ?? "unknown"}`,
+        ok: r.inference_mode === "tee-attested" ? true
+          : r.inference_mode === "manual-jwt" ? "warn"
+          : r.inference_mode === "mocked" ? "warn"
+          : false,
+        detail: r.inference_mode === "tee-attested"
+          ? "JWT minted from TDX attestation token; gateway pinned to deployed image digest"
+          : r.inference_mode === "manual-jwt"
+          ? "Direct gateway call with operator JWT (local dev / sidecar down)"
+          : r.inference_mode === "mocked"
+          ? "Verdict derived from on-chain reads only — no model in the loop"
+          : "missing inference_mode field",
       });
 
-      // 3a. Cross-check the recovered operator against KeyRegistrar on Sepolia
-      if (recovered) {
-        const reg = await readKeyRegistrar(recovered);
+      if (r.agent_signature) {
+        try {
+          const digest = await canonicalDigest({
+            active_since_heartbeat: r.active_since_heartbeat,
+            confidence_owner_active: r.confidence_owner_active,
+            transaction_count_since_heartbeat: r.transaction_count_since_heartbeat,
+            model_id: r.model_id,
+            prompt_hash: r.prompt_hash,
+            response_id: r.response_id,
+            inference_mode: r.inference_mode,
+          });
+          const recovered = recoverAgent({
+            digest,
+            signature: r.agent_signature,
+          });
+          const ok = recovered.toLowerCase() === (r.agent_address ?? "").toLowerCase()
+            && recovered.toLowerCase() === status.agent_wallet_address.toLowerCase();
+          out.push({
+            label: "Analysis verdict signed by THIS deployed agent",
+            ok,
+            detail: ok
+              ? `signer ${shortAddr(recovered)} matches deployed agent address`
+              : `mismatch: signer=${recovered} expected=${r.agent_address}`,
+          });
+        } catch (e: any) {
+          out.push({
+            label: "Analysis verdict signature",
+            ok: false,
+            detail: e?.message ?? String(e),
+          });
+        }
+      } else {
         out.push({
-          label: "EigenAI operator registered in KeyRegistrar",
-          ok: reg.registered === true ? true : reg.registered === false ? false : "warn",
-          detail: reg.registered === true
-            ? `key=${(reg.key ?? "").slice(0, 18)}… on Sepolia`
-            : reg.registered === false
-            ? "operator not found in KeyRegistrar"
-            : `ABI candidates reverted (${reg.rawError?.slice(0, 60) ?? "unknown"})`,
+          label: "Analysis verdict signature",
+          ok: "warn",
+          detail: "no signature on this verdict",
         });
       }
     } else {
       out.push({
-        label: "EigenAI signed receipt",
+        label: "EigenAI analysis",
         ok: "warn",
-        detail: eai
-          ? "analysis recorded but no signature (mocked or local-dev)"
-          : "no analysis run yet",
+        detail: "no analysis run yet — Director can trigger one",
       });
     }
 
-    // 4. Try to recover agent signature on execution log
+    // 4. Execution log signed by agent
     const exec = findLatest(status.recent_events, "EXECUTION");
     if (exec) {
       const p = exec.payload as any;
       try {
-        const digest = await hashOfTransfers(p.transfers);
+        const digest = await canonicalDigest({ transfers: p.transfers });
         const recovered = recoverAgent({
           digest,
           signature: p.agent_signature,
         });
-        const ok = recovered.toLowerCase() === (p.agent_address ?? "").toLowerCase();
+        const ok = recovered.toLowerCase() === (p.agent_address ?? "").toLowerCase()
+          && recovered.toLowerCase() === status.agent_wallet_address.toLowerCase();
         out.push({
-          label: "Execution log signed by agent",
+          label: "Execution log signed by THIS deployed agent",
           ok,
           detail: ok ? `signer matches agent ${shortAddr(recovered)}` : `mismatch: signer=${recovered} expected=${p.agent_address}`,
         });
@@ -288,8 +316,8 @@ export default function Verify() {
         <ol className="list-decimal pl-5 space-y-1 mt-2">
           <li>Recover the signer with <code className="font-mono text-neutral-300">ethers.verifyMessage</code></li>
           <li>Confirm it matches the agent address shown above</li>
-          <li>Cross-check that address against <code className="font-mono text-neutral-300">verify.eigencloud.xyz</code> for the deployed app</li>
-          <li>For EigenAI receipts, additionally verify the operator key against KeyRegistrar</li>
+          <li>Cross-check that address against <code className="font-mono text-neutral-300">verify-sepolia.eigencloud.xyz/app/&lt;app-id&gt;</code> for the deployed app</li>
+          <li>For EigenAI verdicts, additionally check <code className="font-mono text-neutral-300">inference_mode === "tee-attested"</code> — proves the JWT was minted from a TDX attestation token, not a manual override</li>
         </ol>
       </div>
     </div>
@@ -298,16 +326,6 @@ export default function Verify() {
 
 function findLatest(events: AuditEvent[], kind: string): AuditEvent | undefined {
   return events.find((e) => e.kind === kind);
-}
-
-// Mirror the agent's canonical hash: sha256(JSON.stringify({"transfers": [...]}, sort_keys, no spaces))
-async function hashOfTransfers(transfers: any[]): Promise<string> {
-  // The agent's canonical form is python json.dumps(..., sort_keys=True, separators=(',',':'))
-  // For verification we reproduce it as best we can client-side. Returns the digest hex.
-  const canonical = JSON.stringify({ transfers }, Object.keys({ transfers }).sort());
-  const buf = new TextEncoder().encode(canonical);
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {

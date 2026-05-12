@@ -3,6 +3,33 @@
 
 ---
 
+## 0. ARCHITECTURE NOTES (v0.2 — overrides what follows)
+
+These corrections supersede anything inconsistent in sections below. Source of truth: `eigencloud-platform.md` plus first-hand reading of `Layr-Labs/ecloud-inference-example` and `Layr-Labs/skill.md` on 2026-05-11.
+
+**Inference uses a Node sidecar.** The official LLM Proxy (`@layr-labs/ai-gateway-provider`) is TypeScript-only and there is no Python equivalent. We ship a tiny Express server in `agent-sidecar/` inside the same Docker image. FastAPI calls it over loopback at `http://127.0.0.1:9090/infer`. Inside the TEE the sidecar auto-mints attested JWTs from the KMS via the SDK; locally it falls back to `KMS_AUTH_JWT`. See `agent-sidecar/server.js` and `entrypoint.sh`.
+
+**The AI Gateway response has no per-call signature.** Older notes promised `receipt.req_hash / out_hash / sig` fields — those don't exist. The response is plain OpenAI-compatible. Verifiability comes from (a) the upstream image-digest attestation that pinned the deployed model + agent code, and (b) the agent's TEE wallet signing the *verdict* (so anyone can prove which deployed app produced an analysis result). The Verify page recovers the agent address from this signature using `canonicalDigest({...}) → ethers.verifyMessage`.
+
+**Default model is `anthropic/claude-sonnet-4.6`.** The `gpt-oss-120b-f16` open-weight model is supported but the routed Anthropic models work better for the JSON-output prompt we use.
+
+**Instance type is `g1-standard-2t` (Intel TDX).** Older notes said `enterprise-1` — that's stale.
+
+**Deploy command shape:**
+```bash
+docker buildx build --platform linux/amd64 -t ghcr.io/<you>/heirloom:<tag> --push .
+ecloud compute env set sepolia --yes
+ecloud compute app configure tls
+ecloud compute app deploy --name Heirloom-DMS --image-ref ghcr.io/<you>/heirloom:<tag> \
+    --instance-type g1-standard-2t --env-file .env.deploy --log-visibility public \
+    --verifiable --repo <git-url> --commit <sha> --verbose
+```
+Image must live in a public registry (GHCR / Docker Hub) — TEE pulls at deploy time. App name must contain no spaces, otherwise the verifiability dashboard shows `(unnamed)`. The wrapper script `./deploy.sh` handles all of this.
+
+**Verifiability dashboard URL:** `https://verify-sepolia.eigencloud.xyz/app/<app-id>` (or `verify.eigencloud.xyz` on mainnet). Public runtime attestations were not yet shipped as of April 2026 — pre-empt this on stage.
+
+---
+
 ## 1. WHAT THIS IS
 
 Heirloom is a sovereign agent running on EigenCloud that protects crypto assets from being lost forever when the owner dies or becomes incapacitated. The user stores an encrypted copy of their wallet's seed phrase inside a TEE (hardware-sealed secure enclave). They check in periodically via a selfie-based heartbeat. If they stop checking in, the agent runs a multi-phase verification protocol, then autonomously distributes assets to pre-configured beneficiaries.

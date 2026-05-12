@@ -1,13 +1,21 @@
 """EigenAI wallet-activity analysis.
 
-This is the *cryptographically interesting* moment: we ship a deterministic
-prompt to EigenAI (gpt-oss-120b-f16, seed=42) and get back a JSON verdict on
-whether the wallet still looks "alive" — plus a signed receipt that anyone
-can replay and cross-check on-chain via KeyRegistrar.
+This is the *cryptographically interesting* moment of the protocol: we ship a
+deterministic prompt to EigenAI (seed=42) and get back a JSON verdict on
+whether the wallet still looks "alive". The response itself is plain OpenAI-
+compatible — there is no per-call signature; verifiability comes from the
+upstream image-digest attestation. We sign the verdict with the TEE wallet
+so the Verify page can recover the agent that produced it.
 
-If KMS_AUTH_JWT is missing (local dev with no JWT), the analyzer returns a
-mocked verdict with `is_mocked=true` so the demo flow still proceeds end to
-end. The Director Dashboard surfaces this state honestly.
+Inference path order:
+  1. Local Node sidecar at SIDECAR_URL (uses @layr-labs/ai-gateway-provider —
+     handles KMS attestation + JWT minting automatically inside the TEE).
+  2. Direct AI Gateway HTTP with KMS_AUTH_JWT (for local dev or sidecar-down).
+  3. Mocked verdict computed from real on-chain data (last resort — keeps the
+     full demo flow working when neither path is available).
+
+The Director Dashboard surfaces `inference_mode` so the audience can see
+which path produced the verdict.
 """
 
 from __future__ import annotations
@@ -16,7 +24,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 from typing import Any
 
 import httpx
@@ -29,6 +36,7 @@ from ..utils.chain import (
     fetch_recent_transactions,
     format_balance_summary,
 )
+from . import signer
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +75,50 @@ def _sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-async def _call_gateway(prompt: str) -> dict[str, Any]:
-    """POST to AI Gateway /v1/chat/completions. Bearer KMS_AUTH_JWT.
+def _parse_model_json(content: str) -> dict[str, Any]:
+    """Best-effort JSON extraction. Strips fences if the model added any."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start : end + 1]
+    return json.loads(text)
 
-    Returns the full response dict on success, or raises.
-    """
+
+async def _try_sidecar(prompt: str) -> dict[str, Any] | None:
+    """Call the Node sidecar at SIDECAR_URL/infer. Returns None if unreachable."""
     s = get_settings()
+    url = s.sidecar_url.rstrip("/") + "/infer"
+    body = {
+        "model": s.eigen_model,
+        "seed": 42,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, json=body)
+        if r.status_code >= 400:
+            logger.warning("sidecar /infer %s: %s", r.status_code, r.text[:300])
+            return None
+        return r.json()
+    except Exception as exc:
+        logger.info("sidecar unreachable (%s) — falling back", exc)
+        return None
+
+
+async def _try_direct_gateway(prompt: str) -> dict[str, Any] | None:
+    """Direct POST to AI Gateway using KMS_AUTH_JWT. Returns None if not configured."""
+    s = get_settings()
+    if not s.kms_auth_jwt:
+        return None
     url = s.eigen_gateway_url.rstrip("/") + "/v1/chat/completions"
     body = {
         "model": s.eigen_model,
@@ -83,36 +129,34 @@ async def _call_gateway(prompt: str) -> dict[str, Any]:
             {"role": "user", "content": prompt},
         ],
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(
-            url,
-            headers={"Authorization": f"Bearer {s.kms_auth_jwt}"},
-            json=body,
-        )
-    if r.status_code >= 400:
-        raise RuntimeError(f"AI gateway {r.status_code}: {r.text[:500]}")
-    return r.json()
-
-
-def _parse_model_json(content: str) -> dict[str, Any]:
-    """Best-effort JSON extraction. Strips fences if the model added any."""
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:]
-    # Take the first JSON-looking blob
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        text = text[start : end + 1]
-    return json.loads(text)
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {s.kms_auth_jwt}"},
+                json=body,
+            )
+        if r.status_code >= 400:
+            logger.warning("gateway direct %s: %s", r.status_code, r.text[:300])
+            return None
+        resp = r.json()
+        # Normalize OpenAI -> sidecar-style envelope so the caller has one shape
+        return {
+            "text": resp["choices"][0]["message"]["content"],
+            "model": resp.get("model") or s.eigen_model,
+            "mode": "manual-jwt",
+            "response_id": resp.get("id"),
+            "usage": resp.get("usage"),
+        }
+    except Exception as exc:
+        logger.warning("direct gateway call failed: %s", exc)
+        return None
 
 
 async def analyze(plan: Plan) -> AnalysisResult:
     s = get_settings()
 
-    # Gather inputs in parallel-ish
+    # Gather on-chain inputs
     loop = asyncio.get_running_loop()
     balances: list[dict[str, Any]] = []
     for chain_id in plan.configured_chains:
@@ -122,7 +166,9 @@ async def analyze(plan: Plan) -> AnalysisResult:
             )
             balances.append(summary)
         except Exception as exc:
-            balances.append({"chain": chain_name(chain_id), "chain_id": chain_id, "error": str(exc)})
+            balances.append(
+                {"chain": chain_name(chain_id), "chain_id": chain_id, "error": str(exc)}
+            )
 
     txs: list[dict[str, Any]] = []
     for chain_id in plan.configured_chains:
@@ -130,76 +176,84 @@ async def analyze(plan: Plan) -> AnalysisResult:
         txs.extend(chain_txs)
 
     prompt = _build_prompt(plan, txs, balances)
+    prompt_hash = _sha256_hex(prompt)
 
-    # If we don't have a JWT, mock — but use real on-chain data so the verdict
-    # reflects reality even without inference.
-    if not s.kms_auth_jwt:
+    # Try sidecar, then direct, then mock
+    inference_response: dict[str, Any] | None = await _try_sidecar(prompt)
+    if inference_response is None:
+        inference_response = await _try_direct_gateway(prompt)
+
+    if inference_response is None:
+        # Mock — but keep it honest: derived purely from real on-chain reads.
         active = bool(txs)
         most_recent = max((t["timestamp"] for t in txs), default=None) if txs else None
-        result = AnalysisResult(
-            active_since_heartbeat=active,
-            last_transaction_date=most_recent,
-            transaction_count_since_heartbeat=len(txs),
-            confidence_owner_active="MEDIUM" if active else "NONE",
-            reasoning=(
-                "Mocked verdict — KMS_AUTH_JWT not configured. Used real on-chain "
-                f"data: {len(txs)} txs across {len(plan.configured_chains)} chains."
-            ),
-            model_id=s.eigen_model,
-            chain_id=plan.configured_chains[0] if plan.configured_chains else None,
-            is_mocked=True,
-            receipt_req_hash=_sha256_hex(prompt),
-            receipt_out_hash=None,
-            receipt_sig=None,
+        result = _finalize(
+            AnalysisResult(
+                active_since_heartbeat=active,
+                last_transaction_date=most_recent,
+                transaction_count_since_heartbeat=len(txs),
+                confidence_owner_active="MEDIUM" if active else "NONE",
+                reasoning=(
+                    f"Inference unavailable (no sidecar, no KMS_AUTH_JWT). "
+                    f"Verdict derived from real on-chain data only: {len(txs)} txs "
+                    f"across {len(plan.configured_chains)} chains."
+                ),
+                model_id=s.eigen_model,
+                chain_id=plan.configured_chains[0] if plan.configured_chains else None,
+                inference_mode="mocked",
+                is_mocked=True,
+                prompt_hash=prompt_hash,
+            )
         )
         await db.log_event(plan.id, "EIGENAI_ANALYSIS", result.model_dump())
         return result
 
-    # Real call
+    # We have a real response — parse and finalize
+    text = inference_response.get("text") or ""
     try:
-        resp = await _call_gateway(prompt)
-    except Exception as exc:
-        logger.exception("EigenAI call failed")
-        result = AnalysisResult(
-            active_since_heartbeat=False,
-            confidence_owner_active="NONE",
-            reasoning=f"AI gateway error: {exc}",
-            model_id=s.eigen_model,
-            is_mocked=True,
-            receipt_req_hash=_sha256_hex(prompt),
-        )
-        await db.log_event(plan.id, "EIGENAI_ANALYSIS", result.model_dump())
-        return result
-
-    # Extract content + receipt
-    content = resp["choices"][0]["message"]["content"]
-    try:
-        parsed = _parse_model_json(content)
+        parsed = _parse_model_json(text)
     except Exception as exc:
         logger.warning("model returned non-JSON: %s", exc)
         parsed = {
             "active_since_heartbeat": False,
             "confidence_owner_active": "NONE",
-            "reasoning": f"unparseable model output: {content[:200]}",
+            "reasoning": f"unparseable model output: {text[:200]}",
         }
 
-    receipt = resp.get("receipt", {})
-    determinism = resp.get("determinism", {})
-
-    result = AnalysisResult(
-        active_since_heartbeat=bool(parsed.get("active_since_heartbeat")),
-        last_transaction_date=parsed.get("last_transaction_date"),
-        transaction_count_since_heartbeat=int(parsed.get("transaction_count_since_heartbeat") or 0),
-        confidence_owner_active=parsed.get("confidence_owner_active", "NONE"),
-        reasoning=parsed.get("reasoning", ""),
-        model_id=resp.get("model") or s.eigen_model,
-        chain_id=resp.get("chain_id"),
-        receipt_req_hash=receipt.get("req_hash") or _sha256_hex(prompt),
-        receipt_out_hash=receipt.get("out_hash"),
-        receipt_sig=receipt.get("sig"),
-        eigendalink=resp.get("eigendalink"),
-        system_fingerprint=resp.get("system_fingerprint"),
-        is_mocked=False,
+    result = _finalize(
+        AnalysisResult(
+            active_since_heartbeat=bool(parsed.get("active_since_heartbeat")),
+            last_transaction_date=parsed.get("last_transaction_date"),
+            transaction_count_since_heartbeat=int(parsed.get("transaction_count_since_heartbeat") or 0),
+            confidence_owner_active=parsed.get("confidence_owner_active", "NONE"),
+            reasoning=parsed.get("reasoning", ""),
+            model_id=inference_response.get("model") or s.eigen_model,
+            response_id=inference_response.get("response_id"),
+            chain_id=plan.configured_chains[0] if plan.configured_chains else None,
+            inference_mode=inference_response.get("mode", "tee-attested"),
+            is_mocked=False,
+            prompt_hash=prompt_hash,
+        )
     )
     await db.log_event(plan.id, "EIGENAI_ANALYSIS", result.model_dump())
     return result
+
+
+def _finalize(result: AnalysisResult) -> AnalysisResult:
+    """Sign the canonical verdict with the TEE wallet."""
+    payload = {
+        "active_since_heartbeat": result.active_since_heartbeat,
+        "confidence_owner_active": result.confidence_owner_active,
+        "transaction_count_since_heartbeat": result.transaction_count_since_heartbeat,
+        "model_id": result.model_id,
+        "prompt_hash": result.prompt_hash,
+        "response_id": result.response_id,
+        "inference_mode": result.inference_mode,
+    }
+    sig = signer.sign_payload(payload)
+    return result.model_copy(
+        update={
+            "agent_signature": sig["signature"],
+            "agent_address": sig["agent_address"],
+        }
+    )
