@@ -21,7 +21,7 @@ set -euo pipefail
 
 # ----- Config (override via env) -----
 APP_NAME="${APP_NAME:-Heirloom-DMS}"          # NO SPACES (verify dashboard reqt)
-INSTANCE="${INSTANCE:-g1-standard-2t}"        # Intel TDX
+INSTANCE="${INSTANCE:-g1-standard-4t}"        # Intel TDX (smallest TDX option)
 NETWORK="${NETWORK:-sepolia}"
 REPO_URL="${REPO_URL:-https://github.com/Sanjith-Shan/Heirloom}"
 COMMIT="${COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
