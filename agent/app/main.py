@@ -80,6 +80,22 @@ async def agent_info() -> dict:
     }
 
 
+@app.get("/api/debug/attest")
+async def debug_attest() -> dict:
+    """Proxy to the sidecar's diagnostic endpoint — runs the TDX attestation
+    flow against multiple candidate audiences and returns each JWT decoded
+    plus the gateway's response. Used to debug JWT signature rejection."""
+    import httpx
+    s = get_settings()
+    url = s.sidecar_url.rstrip("/") + "/debug/attest"
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.get(url)
+        return r.json()
+    except Exception as exc:
+        return {"error": f"sidecar proxy failed: {exc}"}
+
+
 # ----- Static frontend serving -----
 # Mount built React app last so /api/* takes precedence.
 
