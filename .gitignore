@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# DB / runtime
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+heirloom.db*
+data/
+audit/
+agent/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+*.log
+coverage/
+.next/
+.turbo/
+
+# face-api models (large, downloaded separately)
+frontend/public/models/*.shard*

@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    background-color: #0a0a0a;
+    color: #fafafa;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+}
+
+@layer components {
+  .container-narrow {
+    @apply mx-auto w-full max-w-3xl px-6;
+  }
+  .container-wide {
+    @apply mx-auto w-full max-w-7xl px-6;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium
+           transition-colors focus:outline-none focus:ring-2 focus:ring-white/20 disabled:opacity-50
+           disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-white text-black hover:bg-neutral-200;
+  }
+  .btn-secondary {
+    @apply btn bg-neutral-900 border border-neutral-800 text-white hover:bg-neutral-800;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-500;
+  }
+  .card {
+    @apply rounded-xl border border-neutral-800 bg-neutral-950 p-6;
+  }
+  .input {
+    @apply w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm
+           placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/20;
+  }
+  .label {
+    @apply text-xs uppercase tracking-wider text-neutral-400;
+  }
+  .mono {
+    @apply font-mono text-xs text-neutral-400;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #171717 0%, #262626 50%, #171717 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
