@@ -18,11 +18,11 @@ dist-ssr/
 *.local
 .vite/
 
-# Env
+# Env (never commit anything except the .example template)
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
+!.env.example.tls
 
 # DB / runtime
 *.db
