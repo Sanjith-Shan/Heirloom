@@ -18,8 +18,7 @@ FROM --platform=linux/amd64 node:20-slim AS frontend-builder
 
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
@@ -28,8 +27,7 @@ FROM --platform=linux/amd64 node:20-slim AS sidecar-builder
 
 WORKDIR /build
 COPY agent-sidecar/package.json agent-sidecar/package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --no-audit --no-fund --omit=dev
+RUN npm install --no-audit --no-fund --omit=dev
 COPY agent-sidecar/ ./
 
 # ---- Stage 3: runtime (Python + bundled Node) ----
