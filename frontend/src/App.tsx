@@ -6,7 +6,6 @@ import Heartbeat from "./pages/Heartbeat";
 import Director from "./pages/Director";
 import AuditTrail from "./pages/AuditTrail";
 import Verify from "./pages/Verify";
-import { MockBanner } from "./components/MockBanner";
 import { isMockMode } from "./lib/api";
 
 function Header() {
@@ -31,7 +30,6 @@ function Header() {
 export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
-      <MockBanner />
       <Header />
       <main className="flex-1">
         <Routes>

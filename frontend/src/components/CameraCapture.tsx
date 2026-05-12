@@ -38,18 +38,44 @@ export default function CameraCapture({ onCapture, extractDescriptor = true }: P
 
   async function start() {
     setError(null);
-    try {
-      const m = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = m;
-        await videoRef.current.play();
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("This browser doesn't expose getUserMedia. Try a different browser.");
+      return;
+    }
+    // Progressive fallback. Macbook built-in cams often aren't tagged as
+    // 'user'-facing, so the strict constraint throws NotFoundError. Each
+    // attempt is more permissive than the last.
+    const attempts: MediaStreamConstraints[] = [
+      { video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+      { video: { facingMode: { ideal: "user" } }, audio: false },
+      { video: true, audio: false },
+    ];
+    let lastErr: any = null;
+    for (const constraints of attempts) {
+      try {
+        const m = await navigator.mediaDevices.getUserMedia(constraints);
+        if (videoRef.current) {
+          videoRef.current.srcObject = m;
+          await videoRef.current.play();
+        }
+        setStream(m);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        // Permission denial / dismissed prompt — no point trying other constraints.
+        if (e?.name === "NotAllowedError" || e?.name === "SecurityError") break;
       }
-      setStream(m);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    }
+    const name = lastErr?.name || "Error";
+    const msg = lastErr?.message || String(lastErr);
+    if (name === "NotAllowedError") {
+      setError("Camera permission denied. On macOS: System Settings → Privacy & Security → Camera, then enable your browser. Reload the page after.");
+    } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+      setError("No camera found. Check that one is connected and not in use by another app.");
+    } else if (name === "NotReadableError") {
+      setError("Camera is in use by another app (Zoom / FaceTime / Photo Booth?). Close it and retry.");
+    } else {
+      setError(`${name}: ${msg}`);
     }
   }
 

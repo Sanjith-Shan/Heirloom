@@ -59,6 +59,8 @@ export default function Setup() {
     setUserEmail("owner@example.com");
     setInterval(30);
     setChains([84532]);
+    // Don't pre-fill faceDescriptor — user wants to actually take the picture.
+    // If the camera fails on stage, the "Skip" button still bypasses step 4.
   }, []);
 
   function validateSeed(s: string): boolean {
