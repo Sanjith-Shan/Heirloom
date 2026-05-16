@@ -5,7 +5,7 @@
 
 ## 0. ARCHITECTURE NOTES (v0.2 — overrides what follows)
 
-These corrections supersede anything inconsistent in sections below. Source of truth: `eigencloud-platform.md` plus first-hand reading of `Layr-Labs/ecloud-inference-example` and `Layr-Labs/skill.md` on 2026-05-11.
+These corrections supersede anything inconsistent in sections below. Source of truth: `docs/eigencloud-platform.md` plus first-hand reading of `Layr-Labs/ecloud-inference-example` and `Layr-Labs/skill.md` on 2026-05-11.
 
 **Inference uses a Node sidecar.** The official LLM Proxy (`@layr-labs/ai-gateway-provider`) is TypeScript-only and there is no Python equivalent. We ship a tiny Express server in `agent-sidecar/` inside the same Docker image. FastAPI calls it over loopback at `http://127.0.0.1:9090/infer`. Inside the TEE the sidecar auto-mints attested JWTs from the KMS via the SDK; locally it falls back to `KMS_AUTH_JWT`. See `agent-sidecar/server.js` and `entrypoint.sh`.
 
@@ -62,7 +62,7 @@ No existing solution seals the recovery material in hardware-encrypted memory th
 
 ## 3. EIGENCLOUD PLATFORM REFERENCE
 
-Refer to `eigencloud-platform.md` as the authoritative source for all EigenCloud details. Key points for this project:
+Refer to `docs/eigencloud-platform.md` as the authoritative source for all EigenCloud details. Key points for this project:
 
 ### EigenCompute
 - Docker containers in Intel TDX TEEs on Google Confidential Space.
@@ -379,7 +379,7 @@ Director Dashboard:
 ```
 heirloom/
 ├── CLAUDE.md                       # This file
-├── eigencloud-platform.md          # EigenCloud reference (copy from B³)
+├── docs/eigencloud-platform.md     # EigenCloud reference (copy from B³)
 ├── agent/
 │   ├── app/
 │   │   ├── main.py                 # FastAPI app, static file serving, CORS

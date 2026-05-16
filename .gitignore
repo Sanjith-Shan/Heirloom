@@ -17,6 +17,7 @@ dist/
 dist-ssr/
 *.local
 .vite/
+*.tsbuildinfo
 
 # Env (never commit anything except the .example template)
 .env

@@ -170,15 +170,16 @@ heirloom/
 ├── README.md                  This file
 ├── CLAUDE.md                  Engineering reference (architecture notes,
 │                              corrections, deployment shape)
-├── SKILL.md                   Operating skill for coding agents
 ├── docs/
-│   ├── architecture.md        Detailed system design + alternatives
-│   └── product-feedback.md    Feedback for Eigen Labs
+│   ├── architecture.md           Detailed system design + alternatives
+│   ├── demo-guide.md             Demo Day walk-through
+│   ├── eigencloud-platform.md    EigenCloud platform reference
+│   ├── product-feedback.md       Feedback for Eigen Labs
+│   └── skill.md                  Operating skill for coding agents
 ├── Dockerfile                 Multi-stage: frontend build → sidecar deps
 │                              → Python runtime with Node bundled in
 ├── entrypoint.sh              Boots sidecar then FastAPI in one process tree
 ├── deploy.sh                  Wraps `ecloud compute app deploy --verifiable`
-├── eigencloud-platform.md     EigenCloud platform reference
 ├── agent/
 │   ├── requirements.txt
 │   ├── .env.example
